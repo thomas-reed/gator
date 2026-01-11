@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/google/uuid"
 	"github.com/thomas-reed/gator/internal/database"
 )
 
@@ -31,7 +30,7 @@ func (c *commands) register(name string, f func(*state, command) error) {
 }
 
 func handlerLogin(s *state, cmd command) error {
-	if len(cmd.args) == 0 {
+	if len(cmd.args) < 1 {
 		return fmt.Errorf("Username required.  Usage: gator %s <name>", cmd.name)
 	}
 	username := strings.ToLower(cmd.args[0])
@@ -41,27 +40,24 @@ func handlerLogin(s *state, cmd command) error {
 	}
 
 	if err := s.cfg.SetUser(user.Name); err != nil {
-		return fmt.Errorf("Couldn't set user: %w", err)
+		return fmt.Errorf("Couldn't set user:\n%w", err)
 	}
 	fmt.Printf("User %s set in config\n", username)
 	return nil
 }
 
 func handlerRegister(s *state, cmd command) error {
-	if len(cmd.args) == 0 {
+	if len(cmd.args) < 1 {
 		return fmt.Errorf("Username required.  Usage: gator %s <name>", cmd.name)
 	}
 	name := strings.ToLower(cmd.args[0])
 	
-	user, err := s.db.CreateUser(context.Background(), database.CreateUserParams{
-		ID: uuid.New(),
-		Name: name,
-	})
+	user, err := s.db.CreateUser(context.Background(), name)
 	if err != nil {
-		return fmt.Errorf("Couldn't create user: %w", err)
+		return fmt.Errorf("Couldn't create user:\n%w", err)
 	}
 	if err := s.cfg.SetUser(user.Name); err != nil {
-		return fmt.Errorf("Couldn't set user: %w", err)
+		return fmt.Errorf("Couldn't set user:\n%w", err)
 	}
 	fmt.Println("User created:")
 	fmt.Printf("Name: %s\n", user.Name)
@@ -73,7 +69,7 @@ func handlerRegister(s *state, cmd command) error {
 
 func handlerReset(s *state, cmd command) error {
 	if err := s.db.ResetUsers(context.Background()); err != nil {
-		return fmt.Errorf("Error reseting user table: %w", err)
+		return fmt.Errorf("Error reseting user table:\n%w", err)
 	}
 	fmt.Println("User table reset successfully")
 	return nil
@@ -83,7 +79,7 @@ func handlerListUsers(s *state, cmd command) error {
 	currentUser := s.cfg.CurrentUsername
 	allUsers, err := s.db.GetUsers(context.Background())
 	if err != nil {
-		return fmt.Errorf("Error retrieving users from db: %w", err)
+		return fmt.Errorf("Error retrieving users from db:\n%w", err)
 	}
 	for _, user := range allUsers {
 		if user == currentUser {
@@ -91,6 +87,58 @@ func handlerListUsers(s *state, cmd command) error {
 		} else {
 			fmt.Printf("* %s\n", user)
 		}
+	}
+	return nil
+}
+
+func handlerAggregate(s *state, cmd command) error {
+	testURL := "https://www.wagslane.dev/index.xml"
+	rssPtr, err := fetchFeed(context.Background(), testURL)
+	if err != nil {
+		return fmt.Errorf("Error fetching RSS:\n%w", err)
+	}
+	fmt.Printf("Feed: %+v\n", rssPtr)
+	return nil
+}
+
+func handlerAddFeed(s *state, cmd command) error {
+	user, err := s.db.GetUserByName(context.Background(), s.cfg.CurrentUsername)
+	if err != nil {
+		return fmt.Errorf("Error getting user info from db:\n%w", err)
+	}
+	if len(cmd.args) < 2 {
+		return fmt.Errorf("Not enough arguments.  Usage: gator %s <name_of_feed> <feed_url>", cmd.name)
+	}
+	name := cmd.args[0]
+	url := cmd.args[1]
+	feed, err := s.db.CreateFeed(context.Background(), database.CreateFeedParams{
+		Name: name,
+		Url: url,
+		UserID: user.ID,
+	})
+	if err != nil {
+		return fmt.Errorf("Error adding feed to db:\n%w", err)
+	}
+	fmt.Println("Feed added:")
+	fmt.Printf("ID: %s\n", feed.ID)
+	fmt.Printf("Name: %s\n", feed.Name)
+	fmt.Printf("URL: %s\n", feed.Url)
+	fmt.Printf("UserID: %s\n", feed.UserID)
+	fmt.Printf("Created At: %s\n", feed.CreatedAt)
+	fmt.Printf("Updated At: %s\n", feed.UpdatedAt)
+	return nil
+}
+
+func handlerListFeeds(s *state, cmd command) error {
+	feeds, err := s.db.ListFeeds(context.Background())
+	if err != nil {
+		return fmt.Errorf("Error getting feeds from db:\n%w", err)
+	}
+	for _, feed := range feeds {
+		fmt.Printf("Feed name: %s\n", feed.Name)
+		fmt.Printf("URL: %s\n", feed.Url)
+		fmt.Printf("Added by: %s\n", feed.Name_2)
+		fmt.Println()
 	}
 	return nil
 }

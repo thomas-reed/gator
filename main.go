@@ -44,6 +44,9 @@ func main() {
 	cmds.register("register", handlerRegister)
 	cmds.register("reset", handlerReset)
 	cmds.register("users", handlerListUsers)
+	cmds.register("agg", handlerAggregate)
+	cmds.register("addfeed", handlerAddFeed)
+	cmds.register("feeds", handlerListFeeds)
 
 	// parse cmd line arguments
 	if len(os.Args) < 2 {
