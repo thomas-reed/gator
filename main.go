@@ -5,6 +5,8 @@ import (
 	"log"
 	"os"
 	"strings"
+	"context"
+	"fmt"
 
 	_ "github.com/lib/pq"
 	"github.com/thomas-reed/gator/internal/config"
@@ -45,8 +47,11 @@ func main() {
 	cmds.register("reset", handlerReset)
 	cmds.register("users", handlerListUsers)
 	cmds.register("agg", handlerAggregate)
-	cmds.register("addfeed", handlerAddFeed)
+	cmds.register("addfeed", loggedIn(handlerAddFeed))
 	cmds.register("feeds", handlerListFeeds)
+	cmds.register("follow", loggedIn(handlerFollow))
+	cmds.register("following", loggedIn(handlerFollowing))
+	cmds.register("unfollow", loggedIn(handlerUnfollow))
 
 	// parse cmd line arguments
 	if len(os.Args) < 2 {
@@ -60,4 +65,33 @@ func main() {
 		log.Fatalf("Error running %s command: %s\n", cmdName, err)
 	}
 	os.Exit(0);
+}
+
+func loggedIn(handler func(s *state, cmd command, user database.User) error) func(*state, command) error {
+	return func(s *state, cmd command) error {
+		user, err := s.db.GetUserByName(context.Background(), s.cfg.CurrentUsername)
+		if err != nil {
+			return fmt.Errorf("Error getting user info from db:\n%w", err)
+		}
+		return handler(s, cmd, user)
+	}
+}
+
+func scrapeFeeds(s *state) error {
+	feed, err := s.db.GetNextFeedToFetch(context.Background())
+	if err != nil {
+		return fmt.Errorf("Error getting next feed to fetch:\n%w", err)
+	}
+	rssFeed, err := fetchFeed(context.Background(), feed.Url)
+	if err != nil {
+		return fmt.Errorf("Error fetching feed:\n%w", err)
+	}
+	if _, err = s.db.MarkFeedFetched(context.Background(), feed.ID); err != nil {
+		return fmt.Errorf("Error marking feed as fetched:\n%w", err)
+	}
+	fmt.Printf("Latests Posts from %s:\n", feed.Name)
+	for _, item := range rssFeed.Channel.Item {
+		fmt.Printf(" * %s\n", item.Title)
+	}
+	return nil
 }

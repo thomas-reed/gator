@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/thomas-reed/gator/internal/database"
 )
@@ -92,22 +93,23 @@ func handlerListUsers(s *state, cmd command) error {
 }
 
 func handlerAggregate(s *state, cmd command) error {
-	testURL := "https://www.wagslane.dev/index.xml"
-	rssPtr, err := fetchFeed(context.Background(), testURL)
-	if err != nil {
-		return fmt.Errorf("Error fetching RSS:\n%w", err)
+	if len(cmd.args) < 1 {
+		return fmt.Errorf("Time period required (e.g. 10s, 5m, 1h, etc.).  Usage: gator %s <time_period>", cmd.name)
 	}
-	fmt.Printf("Feed: %+v\n", rssPtr)
-	return nil
+	timeBetweenRequests, err := time.ParseDuration(cmd.args[0])
+	if err != nil {
+		return fmt.Errorf("Error parsing time period:\n%w", err)
+	}
+	fmt.Printf("Collecting feeds every %s...\n", timeBetweenRequests)
+	ticker := time.NewTicker(timeBetweenRequests)
+	for ; ; <-ticker.C {
+		scrapeFeeds(s)
+	}
 }
 
-func handlerAddFeed(s *state, cmd command) error {
-	user, err := s.db.GetUserByName(context.Background(), s.cfg.CurrentUsername)
-	if err != nil {
-		return fmt.Errorf("Error getting user info from db:\n%w", err)
-	}
+func handlerAddFeed(s *state, cmd command, user database.User) error {
 	if len(cmd.args) < 2 {
-		return fmt.Errorf("Not enough arguments.  Usage: gator %s <name_of_feed> <feed_url>", cmd.name)
+		return fmt.Errorf("Feed name and URL required. Usage: gator %s <name_of_feed> <feed_url>", cmd.name)
 	}
 	name := cmd.args[0]
 	url := cmd.args[1]
@@ -119,11 +121,20 @@ func handlerAddFeed(s *state, cmd command) error {
 	if err != nil {
 		return fmt.Errorf("Error adding feed to db:\n%w", err)
 	}
+	feedFollow, err := s.db.CreateFeedFollow(context.Background(), database.CreateFeedFollowParams{
+		UserID: user.ID,
+		FeedID: feed.ID,
+	})
+	if err != nil {
+		return fmt.Errorf("Error creating feed follow:\n%w", err)
+	}
 	fmt.Println("Feed added:")
-	fmt.Printf("ID: %s\n", feed.ID)
+	fmt.Printf("FeedID: %s\n", feed.ID)
+	fmt.Printf("FeedFollowID: %s\n", feedFollow.ID)
 	fmt.Printf("Name: %s\n", feed.Name)
 	fmt.Printf("URL: %s\n", feed.Url)
 	fmt.Printf("UserID: %s\n", feed.UserID)
+	fmt.Printf("User: %s\n", feedFollow.UserName)
 	fmt.Printf("Created At: %s\n", feed.CreatedAt)
 	fmt.Printf("Updated At: %s\n", feed.UpdatedAt)
 	return nil
@@ -134,11 +145,81 @@ func handlerListFeeds(s *state, cmd command) error {
 	if err != nil {
 		return fmt.Errorf("Error getting feeds from db:\n%w", err)
 	}
+
+	if len(feeds) == 0 {
+		fmt.Println("No feeds found.")
+		return nil
+	}
+	
 	for _, feed := range feeds {
-		fmt.Printf("Feed name: %s\n", feed.Name)
-		fmt.Printf("URL: %s\n", feed.Url)
-		fmt.Printf("Added by: %s\n", feed.Name_2)
+		fmt.Printf("Feed name: %s\n", feed.FeedName)
+		fmt.Printf("URL: %s\n", feed.FeedUrl)
+		fmt.Printf("Added by: %s\n", feed.UserName)
 		fmt.Println()
 	}
+	return nil
+}
+
+func handlerFollow (s *state, cmd command, user database.User) error {
+	if len(cmd.args) < 1 {
+		return fmt.Errorf("Feed URL required.  Usage: gator %s <feed_url>", cmd.name)
+	}
+	url := cmd.args[0]
+
+	feed, err := s.db.GetFeedByURL(context.Background(), url)
+	if err != nil {
+		return fmt.Errorf("Error getting user info from db:\n%w", err)
+	}
+
+	feedFollow, err := s.db.CreateFeedFollow(context.Background(), database.CreateFeedFollowParams{
+		UserID: user.ID,
+		FeedID: feed.ID,
+	})
+	if err != nil {
+		return fmt.Errorf("Error creating feed follow:\n%w", err)
+	}
+
+	fmt.Println("Feed followed:")
+	fmt.Printf("ID: %s\n", feedFollow.ID)
+	fmt.Printf("Name: %s\n", feedFollow.FeedName)
+	fmt.Printf("Username: %s\n", feedFollow.UserName)
+	fmt.Printf("Created At: %s\n", feedFollow.CreatedAt)
+	fmt.Printf("Updated At: %s\n", feedFollow.UpdatedAt)
+	return nil
+}
+
+func handlerFollowing (s *state, cmd command, user database.User) error {
+	follows, err := s.db.GetFeedFollowsByUser(context.Background(), user.ID)
+	if err != nil {
+		return fmt.Errorf("Error getting user follows:\n%w", err)
+	}
+
+	if len(follows) == 0 {
+		fmt.Println("You are not following any feeds.")
+		return nil
+	}
+
+	fmt.Println("You follow:")
+	for _, follows := range follows {
+		fmt.Printf(" * %s\n", follows.FeedName)
+	}
+	return nil
+}
+
+func handlerUnfollow(s *state, cmd command, user database.User) error {
+	if len(cmd.args) < 1 {
+		return fmt.Errorf("Feed URL required.  Usage: gator %s <feed_url>", cmd.name)
+	}
+	feed, err := s.db.GetFeedByURL(context.Background(), cmd.args[0])
+	if err != nil {
+		return fmt.Errorf("Error getting feed with the given URL:\n%w", err)
+	}
+	if err = s.db.DeleteFeedFollowByUserAndName(context.Background(), database.DeleteFeedFollowByUserAndNameParams{
+		UserID: user.ID,
+		FeedID: feed.ID,
+	}); err != nil {
+		return fmt.Errorf("Error deleting feed follow:\n%w", err)
+	}
+	fmt.Printf("You are no longer following %s", feed.Name)
 	return nil
 }
