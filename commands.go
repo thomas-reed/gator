@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"strconv"
 
 	"github.com/thomas-reed/gator/internal/database"
 )
@@ -94,7 +95,7 @@ func handlerListUsers(s *state, cmd command) error {
 
 func handlerAggregate(s *state, cmd command) error {
 	if len(cmd.args) < 1 {
-		return fmt.Errorf("Time period required (e.g. 10s, 5m, 1h, etc.).  Usage: gator %s <time_period>", cmd.name)
+		return fmt.Errorf("Poll interval required (e.g. 10s, 5m, 1h, etc.).  Usage: gator %s <poll_interval>", cmd.name)
 	}
 	timeBetweenRequests, err := time.ParseDuration(cmd.args[0])
 	if err != nil {
@@ -221,5 +222,46 @@ func handlerUnfollow(s *state, cmd command, user database.User) error {
 		return fmt.Errorf("Error deleting feed follow:\n%w", err)
 	}
 	fmt.Printf("You are no longer following %s", feed.Name)
+	return nil
+}
+
+func handlerBrowse(s *state, cmd command, user database.User) error {
+	postLimit := 2
+	if len(cmd.args) >= 1 {
+		limit, err := strconv.Atoi(cmd.args[0])
+		if err != nil || limit < 1 {
+			fmt.Printf("Invalid post limit - defaulting to %d.  Usage:  gator %s <post_limit>\n", postLimit, cmd.name)
+		} else {
+			postLimit = limit
+		}
+	}
+
+	posts, err := s.db.GetPostsForUser(context.Background(), database.GetPostsForUserParams{
+		UserID: user.ID,
+		Limit: int32(postLimit),
+	})
+	if err != nil {
+		return fmt.Errorf("Error getting posts from db:\n%w", err)
+	}
+
+	fmt.Printf("Displaying most recent %d posts:\n", postLimit)
+	for _, post := range posts {
+		fmt.Printf("%s\n", post.Title)
+		fmt.Printf("Link: %s\n", post.Url)
+		if post.PublishedAt.Valid {
+			fmt.Printf("Published: %v\n", post.PublishedAt.Time)
+		} else {
+			fmt.Println("Published: unknown")
+		}
+		fmt.Printf("By: %s\n", post.FeedName)
+		fmt.Println("----------------------------------------")
+		if post.Description.Valid {
+			fmt.Printf("%s\n", post.Description.String)
+		} else {
+			fmt.Println("No description available")
+		}
+		fmt.Println("========================================")
+		fmt.Println()
+	}
 	return nil
 }

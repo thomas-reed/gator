@@ -7,6 +7,7 @@ import (
 	"strings"
 	"context"
 	"fmt"
+	"time"
 
 	_ "github.com/lib/pq"
 	"github.com/thomas-reed/gator/internal/config"
@@ -52,6 +53,7 @@ func main() {
 	cmds.register("follow", loggedIn(handlerFollow))
 	cmds.register("following", loggedIn(handlerFollowing))
 	cmds.register("unfollow", loggedIn(handlerUnfollow))
+	cmds.register("browse", loggedIn(handlerBrowse))
 
 	// parse cmd line arguments
 	if len(os.Args) < 2 {
@@ -91,7 +93,52 @@ func scrapeFeeds(s *state) error {
 	}
 	fmt.Printf("Latests Posts from %s:\n", feed.Name)
 	for _, item := range rssFeed.Channel.Item {
-		fmt.Printf(" * %s\n", item.Title)
+		_, err := s.db.GetPostByURL(context.Background(), item.Link)
+		if err == nil {
+			// post already exists
+			continue
+		}
+		parsedTime, err := parseTime(item.PubDate)
+		if err != nil {
+			fmt.Println("Published At time couldn't be parsed - value set to NULL")
+		}
+		pubTime := sql.NullTime{
+			Time: parsedTime,
+			Valid: err == nil,
+		}
+		desc := sql.NullString{
+			String: item.Description,
+			Valid: item.Description != "",
+		}
+		post, err := s.db.CreatePost(context.Background(), database.CreatePostParams{
+			Title: item.Title,
+			Url: item.Link,
+			PublishedAt: pubTime,
+			Description: desc,
+			FeedID: feed.ID,
+		})
+		if err != nil {
+			return fmt.Errorf("Error adding post to db:\n%w", err)
+		}
+		fmt.Printf("Post downloaded: %s\n", post.Title)
 	}
 	return nil
+}
+
+func parseTime(timeStr string) (time.Time, error) {
+    formats := []string{
+        time.RFC1123Z,
+        time.RFC1123,
+        time.RFC3339,
+        // add more if needed
+    }
+    
+    for _, format := range formats {
+        t, err := time.Parse(format, timeStr)
+        if err == nil {
+            return t, nil
+        }
+    }
+    
+    return time.Time{}, fmt.Errorf("could not parse time: %s", timeStr)
 }
